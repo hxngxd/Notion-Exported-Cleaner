@@ -2,50 +2,62 @@ import os
 import re
 from unidecode import unidecode
 from datetime import date
+from bs4 import BeautifulSoup
+from urllib.parse import unquote
 
-def remove_char(s, index):
-    return s[:index] + s[index + 1:]
-def remove_end_space(s):
-    while s[0]==' ':
-        s = remove_char(s, 0)
-    while s[-1]==' ':
-        s = remove_char(s, len(s)-1)
-    return s
+def decode_url(url):
+    return unidecode(unquote(url))
 
-def rename_files(root):
-    cnt=0
+def remove_uuid(s):
+    pattern = re.compile(r'\s*\b[a-z0-9]{32}\b\s*')
+    return pattern.sub('', s)
+
+def is_root(s):
+    pattern = re.compile(r'\bExport-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}\b')
+    return bool(pattern.search(s))
+
+def rename_files_and_folders(root):
+    cnt_files = 0
+    cnt_folders = 0
+    paths = []
+
+    print("> Renaming files...")
     for path, subdirs, files in os.walk(root):
         for name in files:
-            file_name, file_ext = os.path.splitext(name)
-            guid = file_name.split(' ')[-1]
-            if len(guid)==32:
-                file_name = remove_end_space(unidecode(file_name[:-33])) + file_ext
-                os.rename(os.path.join(path, name), os.path.join(path, file_name))
-                print(f'Renamed: {name} => {file_name}')
-                cnt+=1
-            if path not in paths:
-                paths.append(path)
-    return cnt
+            new_name = unidecode(remove_uuid(name))
+            if new_name != name:
+                os.rename(os.path.join(path, name), os.path.join(path, new_name))
+                print(f'* Renamed file: {name} => {new_name}')
+                cnt_files += 1
+        paths.append(path)
+    print("> Done")
 
-def rename_directories():
-    cnt=0
+    print("> Renaming folders...")
     paths.reverse()
     paths.pop()
     for path in paths:
-        split_path = path.split('\\')
-        dirname = split_path[-1]
-        guid = dirname.split(' ')[-1]
-        if len(guid)==32:
-            dirname = remove_end_space(unidecode(dirname[:-33]))
-            split_path.pop()
-            split_path.append(dirname)
-            newpath = '\\'.join(split_path)
-            os.rename(path, newpath)
-            print(f'Renamed: {path} => {newpath}')
-            cnt+=1
-    return cnt
+        path_split = path.split("\\")
+        path_split[-1] = unidecode(remove_uuid(path_split[-1]))
+        new_path = '\\'.join(path_split)
+        if new_path != path:
+            os.rename(path, new_path)
+            print(f'* Renamed folder: {path} => {new_path}')
+            cnt_folders += 1
+    print("> Done")
 
-def remove_guids(filename):
+    print(f'> Renamed {cnt_files} files and {cnt_folders} folders')
+
+def rename_root(root):
+    os.rename(root, str(date.today()))
+
+    print(f'* Renamed exported folder: {root} => {str(date.today())}')
+    
+
+def rebuild_index_html(root):
+    print("> Rebuilding index.html")
+
+    filename = f'.\\{root}\\index.html'
+
     with open(filename, 'r', encoding="utf8") as file:
         data = file.read()
 
@@ -56,24 +68,46 @@ def remove_guids(filename):
     with open(filename, 'w') as file:
         file.write(data)
 
-def contains_uuid(s):
-    # UUIDs are in the form of 8-4-4-4-12 hexadecimal characters
-    uuid_regex = r'\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b'
-    match = re.search(uuid_regex, s)
-    return match is not None
+    print("> Done")
 
-paths = []
+def replace_all_href():
+    print("> Replacing hrefs in html files...")
 
-current_folder = os.getcwd()
-exported_dir = ""
-for dir in os.listdir(current_folder):
-    if os.path.isdir(dir) and contains_uuid(dir):
-        exported_dir = dir
+    for path, subdirs, files in os.walk(root):
+        for name in files:
 
-remove_guids(f'.\\{exported_dir}\\index.html')
+            file_name, file_ext = os.path.splitext(name)
+            if file_name == "index" or file_ext != ".html": continue
 
-f = rename_files(exported_dir)
-d = rename_directories()
-os.rename(f'{current_folder}\\{exported_dir}', f'{current_folder}\\{exported_dir[:-36]}{str(date.today())}')
+            with open(os.path.join(path, name), 'r', encoding="utf8") as file:
+                html = file.read()
 
-print(f'Renamed {f} files and {d+1} directories')
+            soup = BeautifulSoup(html, 'html.parser')
+            for a in soup.find_all('a', href=True):
+                if ".html" in a['href'] or ".png" in a['href']:
+                    new_url = remove_uuid(decode_url(a['href']))
+                    print("* Replaced href: " + a['href'] + " => " + new_url)
+                    a['href'] = new_url
+                    for img in a.find_all('img'):
+                        new_src = remove_uuid(decode_url(img['src']))
+                        print("* Replaced img src: " + img['src'] + " => " + new_src)
+                        img['src'] = new_src
+
+            with open(os.path.join(path, name), 'w', encoding="utf8") as file:
+                file.write(str(soup))
+    
+    print("> Done")
+
+root = ""
+for dir in os.listdir(os.getcwd()):
+    if os.path.isdir(dir) and is_root(dir):
+        root = dir
+        break
+
+if root != "":
+    rename_files_and_folders(root)
+    rebuild_index_html(root)
+    replace_all_href()
+    rename_root(root)
+else:
+    print("> Exported folder not found!")
