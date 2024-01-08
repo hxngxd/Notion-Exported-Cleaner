@@ -14,9 +14,17 @@ def remove_uuid(s):
     pattern = re.compile(r'\s*\b[a-z0-9]{32}\b\s*')
     return pattern.sub('', s)
 
-def ok(s):
-    pattern = re.compile(r'\bExport-[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12}\b')
-    return bool(pattern.search(s))
+def is_valid(s):
+    pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_Export-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.zip$'
+    return True if re.match(pattern, s) else False
+
+def get_name(s):
+    match = re.search(r'_([^_]+)\.zip', s);
+    return match.group(1) if match else None    
+
+def get_part_num(s):
+    match = re.search(r'-Part-(\d+)', s)
+    return match.group(1) if match else None
 
 def rename_files_and_folders(root):
     cnt_files = 0
@@ -48,16 +56,6 @@ def rename_files_and_folders(root):
     print("> Done.")
 
     print(f'> Renamed {cnt_files} files and {cnt_folders} folders.')
-
-def rename_root(root):
-
-    new_name = str(date.today());
-    os.rename(root, new_name)
-
-    print(f'* Renamed extracted folder: {root} => {new_name}.')
-
-    return new_name
-    
 
 def rebuild_index_html(root):
     print("> Rebuilding index.html.")
@@ -104,35 +102,60 @@ def replace_all_href(root):
     
     print("> Done.")
 
-def zip_it(filename, oldzip):
-    print("> Zipping...")
-    shutil.make_archive(f'Cleaned-{oldzip}.zip', 'zip', filename)
-    print(f'{os.getcwd()}\\Cleaned-{oldzip}.zip')
-    print("> Done.")
-    print("> Deleting extracted folder...")
-    shutil.rmtree(filename)
-    print("> Done.")
+def rename_part(filename, part):
+    zip_name = f'{str(date.today())}_{part}'
+    os.rename(filename, zip_name)
+    return zip_name
 
-def unzip_it(filename):
-    print("> Unzipping...")
-    shutil.unpack_archive(filename, ".")
-    print(filename[:43])
+def zip_it(dirs):
+    print("> Zipping...")
+    name = str(date.today())
+    os.makedirs(name, exist_ok=True)
+
+    for dir in dirs:
+        shutil.copytree(dir, f'{name}/{dir}')
+        shutil.rmtree(dir)
+
+    shutil.make_archive(name, 'zip', name)
+    shutil.rmtree(name)
+    print(f'{os.getcwd()}\{name}.zip')
     print("> Done.")
-    return filename[:43]
+    
+def unzip_it(filename):
+    print(f'> Unzipping {filename}...')
+    shutil.unpack_archive(filename, ".")
+    time.sleep(1)
+    print("> Done.")
 
 def clean_it():
+    filename = ""
     for dir in os.listdir(os.getcwd()):
-        if ok(dir) and ".zip" in dir:
-            print(f'>> Cleaning {dir}...')
-            root = unzip_it(dir)
-            time.sleep(2.5)
-            rename_files_and_folders(root)
-            rebuild_index_html(root)
-            replace_all_href(root)
-            new_name = rename_root(root)
-            zip_it(new_name, root)
-            print("---")
-            time.sleep(5)
-    print("> All done. Enjoy!")
+        if is_valid(dir):
+            filename = dir
+            print(f'> Found {filename}')
+            break
 
-clean_it()
+    if filename=="": return "> No exported was found!"
+
+    unzip_it(filename)
+    name = get_name(filename)
+    dirs_to_zip = []
+
+    for part in os.listdir(os.getcwd()):
+        if part != filename and name in part and ".zip" in part:
+            print(f'> Cleaning {part}...')
+            unzip_it(part)
+            time.sleep(1)
+            rename_files_and_folders(name)
+            rebuild_index_html(name)
+            replace_all_href(name)
+            dirs_to_zip.append(rename_part(name, get_part_num(part)))
+            os.remove(part)
+            print("")
+            time.sleep(1)
+
+    zip_it(dirs_to_zip)
+
+    return "> All done. Enjoy!"
+
+print(clean_it())
